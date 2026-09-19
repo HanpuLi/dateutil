@@ -2644,6 +2644,13 @@ class DatetimeExistsTest(unittest.TestCase):
 
         self.assertFalse(tz.datetime_exists(dt))
 
+    def testFullDayGap(self):
+        tzi = tz.gettz("Pacific/Apia")
+
+        dt = datetime(2011, 12, 30, 12, 0)
+
+        self.assertFalse(tz.datetime_exists(dt, tz=tzi))
+
     def testExistsNaive(self):
         tzi = tz.gettz('Australia/Sydney')
 

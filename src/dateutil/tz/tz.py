@@ -1706,6 +1706,32 @@ def datetime_exists(dt, tz=None):
 
     dt = dt.replace(tzinfo=None)
 
+    if isinstance(tz, tzfile):
+        # Avoid the two UTC round trips below when the exact transition data is
+        # already available. A forward transition skips the wall times between
+        # its old- and new-offset projections. Check both neighboring entries
+        # because large offset jumps can sort the candidate before the adjusted
+        # local transition time.
+        timestamp = _datetime_to_timestamp(dt)
+        idx = bisect.bisect_right(tz._trans_list, timestamp) - 1
+
+        for transition_idx in (idx, idx + 1):
+            if transition_idx < 0 or transition_idx >= len(tz._trans_list_utc):
+                continue
+
+            previous = tz._get_ttinfo(transition_idx - 1)
+            current = tz._get_ttinfo(transition_idx)
+            if current.offset <= previous.offset:
+                continue
+
+            transition = tz._trans_list_utc[transition_idx]
+            gap_start = transition + previous.offset
+            gap_end = transition + current.offset
+            if gap_start <= timestamp < gap_end:
+                return False
+
+        return True
+
     # This is essentially a test of whether or not the datetime can survive
     # a round trip to UTC.
     dt_rt = dt.replace(tzinfo=tz).astimezone(UTC).astimezone(tz)

@@ -20,6 +20,7 @@ from six import advance_iterator, integer_types
 from six.moves import _thread, range
 
 from ._common import weekday as weekdaybase
+from .tz import datetime_exists, tzoffset, tzutc
 
 try:
     from math import gcd
@@ -793,6 +794,10 @@ class rrule(rrulebase):
         byhour = self._byhour
         byminute = self._byminute
         bysecond = self._bysecond
+        tzinfo = self._tzinfo
+        check_exists = tzinfo is not None and not isinstance(
+            tzinfo, (tzoffset, tzutc)
+        )
 
         ii = _iterinfo(self)
         ii.rebuild(year, month)
@@ -849,22 +854,44 @@ class rrule(rrulebase):
             # Output results
             if bysetpos and timeset:
                 poslist = []
-                for pos in bysetpos:
-                    if pos < 0:
-                        daypos, timepos = divmod(pos, len(timeset))
-                    else:
-                        daypos, timepos = divmod(pos-1, len(timeset))
-                    try:
-                        i = [x for x in dayset[start:end]
-                             if x is not None][daypos]
-                        time = timeset[timepos]
-                    except IndexError:
-                        pass
-                    else:
+                if not check_exists:
+                    for pos in bysetpos:
+                        if pos < 0:
+                            daypos, timepos = divmod(pos, len(timeset))
+                        else:
+                            daypos, timepos = divmod(pos - 1, len(timeset))
+                        try:
+                            i = [x for x in dayset[start:end] if x is not None][
+                                daypos
+                            ]
+                            time = timeset[timepos]
+                        except IndexError:
+                            pass
+                        else:
+                            date = datetime.date.fromordinal(ii.yearordinal + i)
+                            res = datetime.datetime.combine(date, time)
+                            if res not in poslist:
+                                poslist.append(res)
+                else:
+                    candidates = []
+                    for i in dayset[start:end]:
+                        if i is None:
+                            continue
+
                         date = datetime.date.fromordinal(ii.yearordinal+i)
-                        res = datetime.datetime.combine(date, time)
-                        if res not in poslist:
-                            poslist.append(res)
+                        for time in timeset:
+                            res = datetime.datetime.combine(date, time)
+                            if datetime_exists(res):
+                                candidates.append(res)
+
+                    for pos in bysetpos:
+                        try:
+                            res = candidates[pos - 1 if pos > 0 else pos]
+                        except IndexError:
+                            pass
+                        else:
+                            if res not in poslist:
+                                poslist.append(res)
                 poslist.sort()
                 for res in poslist:
                     if until and res > until:
@@ -888,6 +915,9 @@ class rrule(rrulebase):
                                 self._len = total
                                 return
                             elif res >= self._dtstart:
+                                if check_exists and not datetime_exists(res):
+                                    continue
+
                                 if count is not None:
                                     count -= 1
                                     if count < 0:
