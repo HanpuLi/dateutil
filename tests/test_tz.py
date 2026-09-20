@@ -2651,6 +2651,13 @@ class DatetimeExistsTest(unittest.TestCase):
 
         self.assertFalse(tz.datetime_exists(dt, tz=tzi))
 
+    def testExistsAfterLargeBackwardTransition(self):
+        tzi = tz.gettz("America/Argentina/Catamarca")
+
+        dt = datetime(1991, 3, 3, 0, 30)
+
+        self.assertTrue(tz.datetime_exists(dt, tz=tzi))
+
     def testExistsNaive(self):
         tzi = tz.gettz('Australia/Sydney')
 
