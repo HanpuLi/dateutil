@@ -709,6 +709,35 @@ class tzfile(_tzinfo):
 
         return out
 
+    def _get_gap_transitions(self):
+        try:
+            return self._gap_transitions
+        except AttributeError:
+            starts = []
+            ends = []
+            days = set()
+            for i, transition in enumerate(self._trans_list_utc):
+                previous = self._get_ttinfo(i - 1)
+                current = self._get_ttinfo(i)
+                if current.offset > previous.offset:
+                    gap_start = transition + previous.offset
+                    gap_end = transition + current.offset
+                    starts.append(gap_start)
+                    ends.append(gap_end)
+                    days.update(
+                        range(
+                            EPOCHORDINAL + gap_start // 86400,
+                            EPOCHORDINAL + (gap_end - 1) // 86400 + 1,
+                        )
+                    )
+
+            self._gap_transitions = (
+                tuple(starts),
+                tuple(ends),
+                frozenset(days),
+            )
+            return self._gap_transitions
+
     def _find_last_transition(self, dt, in_utc=False):
         # If there's no list, there are no transitions to find
         if not self._trans_list:
@@ -1704,33 +1733,31 @@ def datetime_exists(dt, tz=None):
             raise ValueError('Datetime is naive and no time zone provided.')
         tz = dt.tzinfo
 
-    dt = dt.replace(tzinfo=None)
-
     if isinstance(tz, tzfile):
         # Avoid the two UTC round trips below when the exact transition data is
-        # already available. A forward transition skips the wall times between
-        # its old- and new-offset projections. Check both neighboring entries
-        # because large offset jumps can sort the candidate before the adjusted
-        # local transition time.
+        # already available. Most dates cannot contain a gap at all, so check a
+        # cached set of gap dates before doing a timestamp conversion and binary
+        # search through the gap intervals.
+        gap_starts, gap_ends, gap_days = tz._get_gap_transitions()
+        if dt.toordinal() not in gap_days:
+            return True
+
         timestamp = _datetime_to_timestamp(dt)
-        idx = bisect.bisect_right(tz._trans_list, timestamp) - 1
+        idx = bisect.bisect_right(gap_starts, timestamp) - 1
+        return idx < 0 or timestamp >= gap_ends[idx]
 
-        for transition_idx in (idx, idx + 1):
-            if transition_idx < 0 or transition_idx >= len(tz._trans_list_utc):
-                continue
+    if isinstance(tz, tzlocal):
+        if not tz._hasdst:
+            return True
 
-            previous = tz._get_ttinfo(transition_idx - 1)
-            current = tz._get_ttinfo(transition_idx)
-            if current.offset <= previous.offset:
-                continue
+        if tz._dst_saved > ZERO:
+            dt = dt.replace(tzinfo=None)
+            is_dst = tz._naive_is_dst(dt)
+            return not (
+                is_dst and is_dst != tz._naive_is_dst(dt - tz._dst_saved)
+            )
 
-            transition = tz._trans_list_utc[transition_idx]
-            gap_start = transition + previous.offset
-            gap_end = transition + current.offset
-            if gap_start <= timestamp < gap_end:
-                return False
-
-        return True
+    dt = dt.replace(tzinfo=None)
 
     # This is essentially a test of whether or not the datetime can survive
     # a round trip to UTC.

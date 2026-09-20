@@ -20,7 +20,8 @@ from six import advance_iterator, integer_types
 from six.moves import _thread, range
 
 from ._common import weekday as weekdaybase
-from .tz import datetime_exists, tzoffset, tzutc
+from .tz import datetime_exists, tzfile, tzlocal, tzoffset, tzutc
+from .tz._common import tzrangebase
 
 try:
     from math import gcd
@@ -798,6 +799,19 @@ class rrule(rrulebase):
         check_exists = tzinfo is not None and not isinstance(
             tzinfo, (tzoffset, tzutc)
         )
+        if isinstance(tzinfo, tzlocal) and not tzinfo._hasdst:
+            check_exists = False
+
+        # Existence checks are relatively expensive. For dateutil time zones
+        # with explicit transition data, narrow them to dates that can contain
+        # a forward gap; other tzinfo implementations use the generic check.
+        if isinstance(tzinfo, tzfile):
+            gap_days = tzinfo._get_gap_transitions()[2]
+        else:
+            gap_days = None
+
+        range_tz = tzinfo if isinstance(tzinfo, tzrangebase) else None
+        range_gap_year = None
 
         ii = _iterinfo(self)
         ii.rebuild(year, month)
@@ -829,6 +843,33 @@ class rrule(rrulebase):
         total = 0
         count = self._count
         while True:
+            if range_tz is not None and year != range_gap_year:
+                if not range_tz.hasdst:
+                    gap_days = frozenset()
+                elif range_tz._dst_base_offset > datetime.timedelta(0):
+                    days = set()
+                    for gap_year in range(
+                        max(1, year - 1), min(datetime.MAXYEAR, year + 1) + 1
+                    ):
+                        transitions = range_tz.transitions(gap_year)
+                        if transitions is not None:
+                            gap_start = transitions[0]
+                            gap_end = gap_start + range_tz._dst_base_offset
+                            days.update(
+                                range(
+                                    gap_start.toordinal(),
+                                    gap_end.toordinal() + 1,
+                                )
+                            )
+
+                    gap_days = frozenset(days)
+                else:
+                    # Negative DST can put the gap at the other transition.
+                    # Fall back to datetime_exists() rather than guessing.
+                    gap_days = None
+
+                range_gap_year = year
+
             # Get dayset with the right frequency
             dayset, start, end = getdayset(year, month, day)
 
@@ -881,7 +922,10 @@ class rrule(rrulebase):
                         date = datetime.date.fromordinal(ii.yearordinal+i)
                         for time in timeset:
                             res = datetime.datetime.combine(date, time)
-                            if datetime_exists(res):
+                            if (
+                                gap_days is not None
+                                and res.toordinal() not in gap_days
+                            ) or datetime_exists(res):
                                 candidates.append(res)
 
                     for pos in bysetpos:
@@ -915,8 +959,15 @@ class rrule(rrulebase):
                                 self._len = total
                                 return
                             elif res >= self._dtstart:
-                                if check_exists and not datetime_exists(res):
-                                    continue
+                                if check_exists:
+                                    if gap_days is None:
+                                        if not datetime_exists(res):
+                                            continue
+                                    elif (
+                                        res.toordinal() in gap_days
+                                        and not datetime_exists(res)
+                                    ):
+                                        continue
 
                                 if count is not None:
                                     count -= 1

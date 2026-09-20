@@ -1086,6 +1086,24 @@ class RRuleTest(unittest.TestCase):
             ],
         )
 
+    def testDailySkipsNonexistentTzRangeTime(self):
+        tzi = tz.tzstr("EST5EDT,M3.2.0/2,M11.1.0/2")
+        self.assertEqual(
+            list(
+                rrule(
+                    DAILY,
+                    count=4,
+                    dtstart=datetime(2026, 3, 7, 2, 30, tzinfo=tzi),
+                )
+            ),
+            [
+                datetime(2026, 3, 7, 2, 30, tzinfo=tzi),
+                datetime(2026, 3, 9, 2, 30, tzinfo=tzi),
+                datetime(2026, 3, 10, 2, 30, tzinfo=tzi),
+                datetime(2026, 3, 11, 2, 30, tzinfo=tzi),
+            ],
+        )
+
     def testDailyInterval(self):
         self.assertEqual(list(rrule(DAILY,
                               count=3,

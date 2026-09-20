@@ -2658,6 +2658,20 @@ class DatetimeExistsTest(unittest.TestCase):
 
         self.assertTrue(tz.datetime_exists(dt, tz=tzi))
 
+    @mark_tzlocal_nix
+    def testTzLocalGap(self):
+        with TZEnvContext("America/New_York"):
+            tzi = tz.tzlocal()
+            gap = datetime(2026, 3, 8, 2, 30)
+
+            self.assertTrue(
+                tz.datetime_exists(gap - timedelta(hours=1), tz=tzi)
+            )
+            self.assertFalse(tz.datetime_exists(gap, tz=tzi))
+            self.assertTrue(
+                tz.datetime_exists(gap + timedelta(hours=1), tz=tzi)
+            )
+
     def testExistsNaive(self):
         tzi = tz.gettz('Australia/Sydney')
 
